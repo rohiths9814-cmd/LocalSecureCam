@@ -35,7 +35,6 @@ public class RecordingService {
                 cameraId,
                 LocalDate.now().toString()
             );
-
             Files.createDirectories(outputDir);
 
             String outputTemplate = outputDir + "/%H-%M.mkv";
@@ -44,16 +43,13 @@ public class RecordingService {
                 "ffmpeg",
 
                 "-rtsp_transport", "tcp",
-                "-use_wallclock_as_timestamps", "1",
                 "-fflags", "+genpts",
+                "-use_wallclock_as_timestamps", "1",
 
                 "-i", rtspUrl,
 
-                // ✅ NO ROTATION / NO SCALE (KEEP ORIGINAL FRAME)
-                "-c:v", "h264_v4l2m2m",
-                "-b:v", "2000k",
-                "-maxrate", "2000k",
-                "-bufsize", "4000k",
+                // ✅ COPY stream (NO re-encode → FULL FPS, correct angle)
+                "-c", "copy",
 
                 "-f", "segment",
                 "-segment_time", "300",
@@ -72,7 +68,7 @@ public class RecordingService {
             System.out.println("STARTED recording: " + cameraId);
 
         } catch (IOException e) {
-            e.printStackTrace(); // 👈 IMPORTANT
+            e.printStackTrace();
             throw new RuntimeException("Failed to start FFmpeg", e);
         }
     }
