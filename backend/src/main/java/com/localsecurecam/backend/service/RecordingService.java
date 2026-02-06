@@ -5,7 +5,7 @@ import org.springframework.stereotype.Service;
 import java.io.*;
 import java.nio.file.*;
 import java.time.LocalDate;
-import java.util.*;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -14,7 +14,6 @@ public class RecordingService {
     private static final String FFMPEG = "/usr/bin/ffmpeg";
     private static final String BASE_DIR = "/home/pi/LocalSecureCam/recordings";
 
-    // Thread-safe (VERY IMPORTANT)
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
 
     private final Map<String, String> cameraUrls = Map.of(
@@ -35,80 +34,69 @@ public class RecordingService {
         }
 
         try {
-            Path outputDir = Paths.get(
-                BASE_DIR,
-                cameraId,
-                LocalDate.now().toString()
-            );
-            Files.createDirectories(outputDir);
+            Path dir = Paths.get(BASE_DIR, cameraId, LocalDate.now().toString());
+            Files.createDirectories(dir);
 
-            String outputTemplate =
-                outputDir.resolve("%Y-%m-%d_%H-%M-%S.mkv").toString();
+            String output =
+                dir.resolve("%Y-%m-%d_%H-%M-%S.mkv").toString();
 
-            List<String> command = List.of(
+            ProcessBuilder pb = new ProcessBuilder(
                 FFMPEG,
 
-                // 🔧 FIX TIMESTAMPS (THIS IS THE KEY)
+                // ✅ FIX BAD RTSP TIMESTAMPS
                 "-fflags", "+genpts",
                 "-use_wallclock_as_timestamps", "1",
+                "-copyts",
+                "-avoid_negative_ts", "make_zero",
 
+                // RTSP
                 "-rtsp_transport", "tcp",
                 "-probesize", "10M",
                 "-analyzeduration", "10M",
 
                 "-i", rtspUrl,
 
-                // ✅ COPY STREAM (NO RE-ENCODE)
+                // ✅ COPY — NO RE-ENCODE
                 "-map", "0:v:0",
                 "-c:v", "copy",
 
+                // SEGMENTING
                 "-f", "segment",
                 "-segment_time", "300",
-                "-reset_timestamps", "1",
                 "-strftime", "1",
 
-                outputTemplate
+                output
             );
 
-            System.out.println("\n▶ STARTING CAMERA: " + cameraId);
-            command.forEach(System.out::println);
-
-            ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
             Process process = pb.start();
-
             processes.put(cameraId, process);
 
-            // 🔥 LOG OUTPUT (DO NOT REMOVE)
-            new Thread(() -> readLogs(cameraId, process)).start();
+            new Thread(() -> log(cameraId, process)).start();
 
             System.out.println("✅ Recording started: " + cameraId);
 
         } catch (Exception e) {
             e.printStackTrace();
-            throw new RuntimeException("Failed to start recording " + cameraId, e);
+            throw new RuntimeException("FFmpeg failed for " + cameraId, e);
         }
     }
 
     public synchronized void stopRecording(String cameraId) {
-        Process process = processes.remove(cameraId);
-        if (process != null) {
-            process.destroy();
+        Process p = processes.remove(cameraId);
+        if (p != null) {
+            p.destroy();
             System.out.println("🛑 Recording stopped: " + cameraId);
         }
     }
 
-    private void readLogs(String cameraId, Process process) {
+    private void log(String cam, Process p) {
         try (BufferedReader br =
-                 new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-
+                 new BufferedReader(new InputStreamReader(p.getInputStream()))) {
             String line;
             while ((line = br.readLine()) != null) {
-                System.out.println("[" + cameraId + "] " + line);
+                System.out.println("[" + cam + "] " + line);
             }
-
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        } catch (IOException ignored) {}
     }
 }
