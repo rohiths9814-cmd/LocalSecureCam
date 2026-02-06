@@ -34,39 +34,44 @@ public class RecordingService {
         }
 
         try {
-            Path dir = Paths.get(BASE_DIR, cameraId, LocalDate.now().toString());
+            Path dir = Paths.get(
+                BASE_DIR,
+                cameraId,
+                LocalDate.now().toString()
+            );
             Files.createDirectories(dir);
 
             String output =
-                dir.resolve("%Y-%m-%d_%H-%M-%S.mkv").toString();
+                dir.resolve("%Y-%m-%d_%H-%M-%S.mp4").toString();
 
             ProcessBuilder pb = new ProcessBuilder(
-                FFMPEG,
-
-                // ✅ FIX BAD RTSP TIMESTAMPS
-                "-fflags", "+genpts",
-                "-use_wallclock_as_timestamps", "1",
-                "-copyts",
-                "-avoid_negative_ts", "make_zero",
-
-                // RTSP
+                "/usr/bin/ffmpeg",
+                        
                 "-rtsp_transport", "tcp",
                 "-probesize", "10M",
                 "-analyzeduration", "10M",
-
+                        
+                "-fflags", "+genpts",
+                "-use_wallclock_as_timestamps", "1",
+                "-avoid_negative_ts", "make_zero",
+                        
                 "-i", rtspUrl,
-
-                // ✅ COPY — NO RE-ENCODE
+                        
+                // COPY (NO RE-ENCODE)
                 "-map", "0:v:0",
                 "-c:v", "copy",
-
-                // SEGMENTING
+                        
+                // SAFE MP4
+                "-movflags", "+frag_keyframe+empty_moov",
+                        
                 "-f", "segment",
                 "-segment_time", "300",
+                "-reset_timestamps", "1",
                 "-strftime", "1",
-
+                        
                 output
             );
+
 
             pb.redirectErrorStream(true);
             Process process = pb.start();
@@ -78,7 +83,7 @@ public class RecordingService {
 
         } catch (Exception e) {
             e.printStackTrace();
-            throw new RuntimeException("FFmpeg failed for " + cameraId, e);
+            throw new RuntimeException("FFmpeg failed", e);
         }
     }
 
