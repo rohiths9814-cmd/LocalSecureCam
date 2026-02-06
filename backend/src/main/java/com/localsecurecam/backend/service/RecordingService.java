@@ -6,14 +6,16 @@ import java.io.*;
 import java.nio.file.*;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class RecordingService {
 
-    private final Map<String, Process> processes = new HashMap<>();
-
     private static final String FFMPEG = "/usr/bin/ffmpeg";
     private static final String BASE_DIR = "/home/pi/LocalSecureCam/recordings";
+
+    // Thread-safe (VERY IMPORTANT)
+    private final Map<String, Process> processes = new ConcurrentHashMap<>();
 
     private final Map<String, String> cameraUrls = Map.of(
         "camera1", "rtsp://192.168.31.196:554/",
@@ -38,7 +40,6 @@ public class RecordingService {
                 cameraId,
                 LocalDate.now().toString()
             );
-
             Files.createDirectories(outputDir);
 
             String outputTemplate =
@@ -47,16 +48,19 @@ public class RecordingService {
             List<String> command = List.of(
                 FFMPEG,
 
-                "-loglevel", "info",
+                // 🔧 FIX TIMESTAMPS (THIS IS THE KEY)
+                "-fflags", "+genpts",
+                "-use_wallclock_as_timestamps", "1",
 
                 "-rtsp_transport", "tcp",
+                "-probesize", "10M",
+                "-analyzeduration", "10M",
+
                 "-i", rtspUrl,
 
+                // ✅ COPY STREAM (NO RE-ENCODE)
                 "-map", "0:v:0",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-tune", "zerolatency",
-                "-crf", "28",
+                "-c:v", "copy",
 
                 "-f", "segment",
                 "-segment_time", "300",
@@ -66,35 +70,23 @@ public class RecordingService {
                 outputTemplate
             );
 
-            System.out.println("▶ Starting FFmpeg:");
+            System.out.println("\n▶ STARTING CAMERA: " + cameraId);
             command.forEach(System.out::println);
 
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
-
             Process process = pb.start();
+
             processes.put(cameraId, process);
 
-            // 🔥 READ FFMPEG LOGS (THIS IS KEY)
-            new Thread(() -> {
-                try (BufferedReader reader =
-                         new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        System.out.println("[" + cameraId + "] " + line);
-                    }
-
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }).start();
+            // 🔥 LOG OUTPUT (DO NOT REMOVE)
+            new Thread(() -> readLogs(cameraId, process)).start();
 
             System.out.println("✅ Recording started: " + cameraId);
 
         } catch (Exception e) {
             e.printStackTrace();
-            throw new RuntimeException("FFmpeg failed for " + cameraId, e);
+            throw new RuntimeException("Failed to start recording " + cameraId, e);
         }
     }
 
@@ -103,6 +95,20 @@ public class RecordingService {
         if (process != null) {
             process.destroy();
             System.out.println("🛑 Recording stopped: " + cameraId);
+        }
+    }
+
+    private void readLogs(String cameraId, Process process) {
+        try (BufferedReader br =
+                 new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+
+            String line;
+            while ((line = br.readLine()) != null) {
+                System.out.println("[" + cameraId + "] " + line);
+            }
+
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 }
