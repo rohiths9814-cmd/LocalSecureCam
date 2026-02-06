@@ -49,16 +49,12 @@ public class RecordingService {
 
                 "-i", rtspUrl,
 
-                // ✅ FIXED ASPECT RATIO + ANGLE
-                "-vf", "transpose=clock,scale=1920:-2",
-
-                // ✅ HARDWARE ENCODING (PI SAFE)
+                // ✅ NO ROTATION / NO SCALE (KEEP ORIGINAL FRAME)
                 "-c:v", "h264_v4l2m2m",
                 "-b:v", "2000k",
                 "-maxrate", "2000k",
                 "-bufsize", "4000k",
 
-                // ✅ SEGMENTED RECORDING
                 "-f", "segment",
                 "-segment_time", "300",
                 "-reset_timestamps", "1",
@@ -69,13 +65,15 @@ public class RecordingService {
 
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
-            Process process = pb.start();
 
+            Process process = pb.start();
             processes.put(cameraId, process);
+
             System.out.println("STARTED recording: " + cameraId);
 
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            e.printStackTrace(); // 👈 IMPORTANT
+            throw new RuntimeException("Failed to start FFmpeg", e);
         }
     }
 
