@@ -48,7 +48,7 @@ public class RecordingService {
 
                 "-i", rtspUrl,
 
-                // ✅ COPY stream (NO re-encode → FULL FPS, correct angle)
+                // ✅ EXACT CAMERA STREAM (NO CPU HIT)
                 "-c", "copy",
 
                 "-f", "segment",
@@ -69,7 +69,7 @@ public class RecordingService {
 
         } catch (IOException e) {
             e.printStackTrace();
-            throw new RuntimeException("Failed to start FFmpeg", e);
+            throw new RuntimeException("FFmpeg start failed", e);
         }
     }
 
