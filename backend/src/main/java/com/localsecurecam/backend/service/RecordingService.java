@@ -2,21 +2,19 @@ package com.localsecurecam.backend.service;
 
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.io.*;
+import java.nio.file.*;
 import java.time.LocalDate;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Service
 public class RecordingService {
 
     private final Map<String, Process> processes = new HashMap<>();
 
-    // 👉 Update camera RTSP URLs here
+    private static final String FFMPEG = "/usr/bin/ffmpeg";
+    private static final String BASE_DIR = "/home/pi/LocalSecureCam/recordings";
+
     private final Map<String, String> cameraUrls = Map.of(
         "camera1", "rtsp://192.168.31.196:554/",
         "camera2", "rtsp://192.168.31.107:554/"
@@ -25,7 +23,7 @@ public class RecordingService {
     public synchronized void startRecording(String cameraId) {
 
         if (processes.containsKey(cameraId)) {
-            System.out.println(cameraId + " is already recording");
+            System.out.println("⚠ Already recording: " + cameraId);
             return;
         }
 
@@ -35,9 +33,8 @@ public class RecordingService {
         }
 
         try {
-            // recordings/camera1/2026-02-06/
             Path outputDir = Paths.get(
-                "recordings",
+                BASE_DIR,
                 cameraId,
                 LocalDate.now().toString()
             );
@@ -48,31 +45,29 @@ public class RecordingService {
                 outputDir.resolve("%Y-%m-%d_%H-%M-%S.mkv").toString();
 
             List<String> command = List.of(
-                "ffmpeg",
+                FFMPEG,
 
-                // ---------- INPUT ----------
+                "-loglevel", "info",
+
                 "-rtsp_transport", "tcp",
-                "-stimeout", "5000000",      // 5s RTSP timeout
                 "-i", rtspUrl,
 
-                // ---------- VIDEO ----------
                 "-map", "0:v:0",
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
                 "-tune", "zerolatency",
                 "-crf", "28",
-                "-g", "28",
-                "-keyint_min", "28",
 
-                // ---------- SEGMENT ----------
                 "-f", "segment",
-                "-segment_time", "300",     // 5 minutes
+                "-segment_time", "300",
                 "-reset_timestamps", "1",
                 "-strftime", "1",
 
-                // ---------- OUTPUT ----------
                 outputTemplate
             );
+
+            System.out.println("▶ Starting FFmpeg:");
+            command.forEach(System.out::println);
 
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
@@ -80,11 +75,26 @@ public class RecordingService {
             Process process = pb.start();
             processes.put(cameraId, process);
 
-            System.out.println("STARTED recording: " + cameraId);
+            // 🔥 READ FFMPEG LOGS (THIS IS KEY)
+            new Thread(() -> {
+                try (BufferedReader reader =
+                         new BufferedReader(new InputStreamReader(process.getInputStream()))) {
 
-        } catch (IOException e) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        System.out.println("[" + cameraId + "] " + line);
+                    }
+
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }).start();
+
+            System.out.println("✅ Recording started: " + cameraId);
+
+        } catch (Exception e) {
             e.printStackTrace();
-            throw new RuntimeException("Failed to start FFmpeg for " + cameraId, e);
+            throw new RuntimeException("FFmpeg failed for " + cameraId, e);
         }
     }
 
@@ -92,7 +102,7 @@ public class RecordingService {
         Process process = processes.remove(cameraId);
         if (process != null) {
             process.destroy();
-            System.out.println("STOPPED recording: " + cameraId);
+            System.out.println("🛑 Recording stopped: " + cameraId);
         }
     }
 }
