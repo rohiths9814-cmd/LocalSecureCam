@@ -5,13 +5,7 @@
 
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.localsecurecam</groupId>
-    <artifactId>backend</artifactId>
-    <version>1.0.0</version>
-    <packaging>jar</packaging>
-
-    <name>LocalSecureCam</name>
-
+    <!-- ✅ THIS IS THE CRITICAL FIX -->
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
@@ -19,11 +13,18 @@
         <relativePath/>
     </parent>
 
+    <groupId>com.localsecurecam</groupId>
+    <artifactId>backend</artifactId>
+    <version>1.0.0</version>
+    <name>LocalSecureCam</name>
+    <description>Local CCTV Recorder for Raspberry Pi</description>
+
     <properties>
         <java.version>21</java.version>
     </properties>
 
     <dependencies>
+        <!-- Web API -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
@@ -32,6 +33,7 @@
 
     <build>
         <plugins>
+            <!-- Spring Boot runner -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
