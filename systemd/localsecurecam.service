@@ -1,0 +1,26 @@
+[Unit]
+Description=LocalSecureCam NVR Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+
+WorkingDirectory=/home/pi/LocalSecureCam/backend
+
+ExecStart=/usr/bin/java -jar /home/pi/LocalSecureCam/backend/target/backend-1.0.0.jar
+
+Restart=always
+RestartSec=5
+SuccessExitStatus=143
+
+# JVM hardening for Raspberry Pi
+Environment=JAVA_OPTS=-Xms256m -Xmx512m
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
