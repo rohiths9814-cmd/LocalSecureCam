@@ -2,8 +2,6 @@ package com.localsecurecam.backend.service;
 
 import org.springframework.stereotype.Service;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.nio.file.*;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -16,13 +14,9 @@ public class RecordingService {
     private static final String FFMPEG = "/usr/bin/ffmpeg";
     private static final String BASE_DIR = "/home/pi/LocalSecureCam/recordings";
 
-    // ===== TUNING =====
-    private static final long STALL_TIMEOUT_SEC = 30;
     private static final long FORCED_RESTART_SEC = 2 * 60 * 60; // 2 hours
-    // ==================
 
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
-    private final Map<String, Instant> lastOutput = new ConcurrentHashMap<>();
     private final Map<String, Instant> lastStart = new ConcurrentHashMap<>();
     private final Map<String, Boolean> autoRestart = new ConcurrentHashMap<>();
 
@@ -36,8 +30,6 @@ public class RecordingService {
     // ===================== CONSTRUCTOR =====================
     public RecordingService(HealthService healthService) {
         this.healthService = healthService;
-
-        new Thread(this::stallMonitor, "ffmpeg-stall-monitor").start();
         new Thread(this::scheduledRestartMonitor, "ffmpeg-periodic-restart").start();
     }
 
@@ -94,7 +86,6 @@ public class RecordingService {
             Process process = pb.start();
 
             processes.put(cameraId, process);
-            lastOutput.put(cameraId, Instant.now());
             lastStart.put(cameraId, Instant.now());
 
             healthService.setState(
@@ -102,8 +93,8 @@ public class RecordingService {
                     HealthService.CameraState.RECORDING
             );
 
-            new Thread(() -> log(cameraId, process), "ffmpeg-log-" + cameraId).start();
-            new Thread(() -> exitWatchdog(cameraId, process), "exit-watchdog-" + cameraId).start();
+            new Thread(() -> exitWatchdog(cameraId, process),
+                    "ffmpeg-exit-" + cameraId).start();
 
             System.out.println("✅ Recording started: " + cameraId);
 
@@ -119,7 +110,6 @@ public class RecordingService {
         Process p = processes.remove(cameraId);
         if (p != null) p.destroyForcibly();
 
-        lastOutput.remove(cameraId);
         lastStart.remove(cameraId);
 
         healthService.setState(
@@ -138,7 +128,7 @@ public class RecordingService {
 
             if (!Boolean.TRUE.equals(autoRestart.get(cameraId))) return;
 
-            System.out.println("🔁 FFmpeg exited for " + cameraId + " (code=" + code + ")");
+            System.err.println("🔁 FFmpeg exited for " + cameraId + " (code=" + code + ")");
 
             healthService.setState(
                     cameraId,
@@ -149,53 +139,6 @@ public class RecordingService {
             startRecording(cameraId);
 
         } catch (InterruptedException ignored) {}
-    }
-
-    // ===================== LOG =====================
-    private void log(String cam, Process p) {
-        try (BufferedReader br =
-                     new BufferedReader(new InputStreamReader(p.getInputStream()))) {
-
-            String line;
-            while ((line = br.readLine()) != null) {
-                lastOutput.put(cam, Instant.now());
-                System.out.println("[" + cam + "] " + line);
-            }
-
-        } catch (Exception ignored) {}
-    }
-
-    // ===================== STALL MONITOR =====================
-    private void stallMonitor() {
-        while (true) {
-            try {
-                Thread.sleep(10_000);
-
-                for (String cam : processes.keySet()) {
-                    Instant last = lastOutput.get(cam);
-                    if (last == null) continue;
-
-                    long silent =
-                            Instant.now().getEpochSecond()
-                                    - last.getEpochSecond();
-
-                    if (silent > STALL_TIMEOUT_SEC) {
-                        System.err.println("⚠ FFmpeg stalled for " + cam);
-
-                        healthService.setState(
-                                cam,
-                                HealthService.CameraState.RESTARTING
-                        );
-
-                        Process p = processes.remove(cam);
-                        if (p != null) p.destroyForcibly();
-
-                        Thread.sleep(3000);
-                        startRecording(cam);
-                    }
-                }
-            } catch (InterruptedException ignored) {}
-        }
     }
 
     // ===================== PERIODIC RESTART =====================
