@@ -52,29 +52,29 @@ public class RecordingService {
             String output = dir.resolve("%Y-%m-%d_%H-%M-%S.mp4").toString();
 
             ProcessBuilder pb = new ProcessBuilder(
-                    FFMPEG,
+                FFMPEG,
 
-                    "-rtsp_transport", "tcp",
-                    "-stimeout", "5000000",
-                    "-rw_timeout", "5000000",
+                "-rtsp_transport", "tcp",
+                "-probesize", "10M",
+                "-analyzeduration", "10M",
 
-                    "-fflags", "+genpts",
-                    "-use_wallclock_as_timestamps", "1",
-                    "-avoid_negative_ts", "make_zero",
+                "-fflags", "+genpts",
+                "-use_wallclock_as_timestamps", "1",
+                "-avoid_negative_ts", "make_zero",
 
-                    "-i", rtspUrl,
+                "-i", rtspUrl,
 
-                    "-map", "0:v:0",
-                    "-c:v", "copy",
+                "-map", "0:v:0",
+                "-c:v", "copy",
 
-                    "-movflags", "+frag_keyframe+empty_moov",
+                "-movflags", "+frag_keyframe+empty_moov",
 
-                    "-f", "segment",
-                    "-segment_time", "300",
-                    "-reset_timestamps", "1",
-                    "-strftime", "1",
+                "-f", "segment",
+                "-segment_time", "300",
+                "-reset_timestamps", "1",
+                "-strftime", "1",
 
-                    output
+                output
             );
 
             pb.redirectErrorStream(true);
