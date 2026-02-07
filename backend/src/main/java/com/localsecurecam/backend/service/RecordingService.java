@@ -15,29 +15,33 @@ public class RecordingService {
     private static final String FFMPEG = "/usr/bin/ffmpeg";
     private static final String BASE_DIR = "/home/pi/LocalSecureCam/recordings";
 
-    // If no FFmpeg output for this time → restart
+    // ===== TUNING PARAMETERS =====
     private static final long STALL_TIMEOUT_SEC = 30;
+    private static final long FORCED_RESTART_SEC = 2 * 60 * 60; // 2 hours
+    // =============================
 
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
     private final Map<String, Boolean> autoRestart = new ConcurrentHashMap<>();
     private final Map<String, Instant> lastOutput = new ConcurrentHashMap<>();
+    private final Map<String, Instant> lastStart = new ConcurrentHashMap<>();
 
     private final Map<String, String> cameraUrls = Map.of(
             "camera1", "rtsp://192.168.31.196:554/",
             "camera2", "rtsp://192.168.31.107:554/"
     );
 
+    public RecordingService() {
+        new Thread(this::stallMonitor, "ffmpeg-stall-monitor").start();
+        new Thread(this::scheduledRestartMonitor, "ffmpeg-periodic-restart").start();
+    }
+
     // ===================== START =====================
     public synchronized void startRecording(String cameraId) {
 
-        if (processes.containsKey(cameraId)) {
-            return;
-        }
+        if (processes.containsKey(cameraId)) return;
 
         String rtspUrl = cameraUrls.get(cameraId);
-        if (rtspUrl == null) {
-            throw new RuntimeException("Unknown camera: " + cameraId);
-        }
+        if (rtspUrl == null) throw new RuntimeException("Unknown camera: " + cameraId);
 
         autoRestart.put(cameraId, true);
 
@@ -78,6 +82,7 @@ public class RecordingService {
 
             processes.put(cameraId, process);
             lastOutput.put(cameraId, Instant.now());
+            lastStart.put(cameraId, Instant.now());
 
             new Thread(() -> log(cameraId, process), "ffmpeg-log-" + cameraId).start();
             new Thread(() -> exitWatchdog(cameraId, process), "exit-watchdog-" + cameraId).start();
@@ -94,11 +99,10 @@ public class RecordingService {
         autoRestart.put(cameraId, false);
 
         Process p = processes.remove(cameraId);
-        if (p != null) {
-            p.destroyForcibly();
-        }
+        if (p != null) p.destroyForcibly();
 
         lastOutput.remove(cameraId);
+        lastStart.remove(cameraId);
     }
 
     // ===================== EXIT WATCHDOG =====================
@@ -116,7 +120,7 @@ public class RecordingService {
         } catch (InterruptedException ignored) {}
     }
 
-    // ===================== LOG + STALL DETECTION =====================
+    // ===================== LOG =====================
     private void log(String cam, Process p) {
         try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
             String line;
@@ -128,10 +132,6 @@ public class RecordingService {
     }
 
     // ===================== STALL MONITOR =====================
-    public RecordingService() {
-        new Thread(this::stallMonitor, "ffmpeg-stall-monitor").start();
-    }
-
     private void stallMonitor() {
         while (true) {
             try {
@@ -145,6 +145,32 @@ public class RecordingService {
 
                     if (silent > STALL_TIMEOUT_SEC) {
                         System.err.println("⚠ FFmpeg stalled for " + cam + ", restarting");
+
+                        Process p = processes.remove(cam);
+                        if (p != null) p.destroyForcibly();
+
+                        Thread.sleep(3000);
+                        startRecording(cam);
+                    }
+                }
+            } catch (InterruptedException ignored) {}
+        }
+    }
+
+    // ===================== PERIODIC RESTART =====================
+    private void scheduledRestartMonitor() {
+        while (true) {
+            try {
+                Thread.sleep(60_000); // check every minute
+
+                for (String cam : processes.keySet()) {
+                    Instant started = lastStart.get(cam);
+                    if (started == null) continue;
+
+                    long uptime = Instant.now().getEpochSecond() - started.getEpochSecond();
+
+                    if (uptime > FORCED_RESTART_SEC) {
+                        System.out.println("♻ Periodic FFmpeg restart for " + cam);
 
                         Process p = processes.remove(cam);
                         if (p != null) p.destroyForcibly();
