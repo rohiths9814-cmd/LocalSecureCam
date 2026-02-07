@@ -2,6 +2,8 @@ package com.localsecurecam.backend.service;
 
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.nio.file.*;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -14,16 +16,15 @@ public class RecordingService {
     private static final String FFMPEG = "/usr/bin/ffmpeg";
     private static final String BASE_DIR = "/home/pi/LocalSecureCam/recordings";
 
-    // ===== TUNING (SAFE DEFAULTS) =====
-    private static final long STALL_TIMEOUT_SEC = 45;
+    // ===== TUNING =====
+    private static final long STALL_TIMEOUT_SEC = 30;
     private static final long FORCED_RESTART_SEC = 2 * 60 * 60; // 2 hours
-    // =================================
+    // ==================
 
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
+    private final Map<String, Instant> lastOutput = new ConcurrentHashMap<>();
     private final Map<String, Instant> lastStart = new ConcurrentHashMap<>();
-    private final Map<String, Path> activeFile = new ConcurrentHashMap<>();
     private final Map<String, Boolean> autoRestart = new ConcurrentHashMap<>();
-    private final Map<String, Boolean> restarting = new ConcurrentHashMap<>();
 
     private final Map<String, String> cameraUrls = Map.of(
             "camera1", "rtsp://192.168.31.196:554/",
@@ -36,30 +37,21 @@ public class RecordingService {
     public RecordingService(HealthService healthService) {
         this.healthService = healthService;
 
-        new Thread(this::fileHeartbeatMonitor, "ffmpeg-file-heartbeat").start();
+        new Thread(this::stallMonitor, "ffmpeg-stall-monitor").start();
         new Thread(this::scheduledRestartMonitor, "ffmpeg-periodic-restart").start();
     }
 
     // ===================== START =====================
     public synchronized void startRecording(String cameraId) {
 
-        // Prevent restart storms
-        if (Boolean.TRUE.equals(restarting.get(cameraId))) {
-            return;
-        }
-
-        restarting.put(cameraId, true);
+        if (processes.containsKey(cameraId)) return;
 
         String rtspUrl = cameraUrls.get(cameraId);
         if (rtspUrl == null) {
-            restarting.put(cameraId, false);
             throw new RuntimeException("Unknown camera: " + cameraId);
         }
 
         autoRestart.put(cameraId, true);
-
-        // HARD cleanup before start
-        cleanupState(cameraId);
 
         try {
             Path dir = Paths.get(
@@ -69,8 +61,8 @@ public class RecordingService {
             );
             Files.createDirectories(dir);
 
-            Path outputPattern =
-                    dir.resolve("%Y-%m-%d_%H-%M-%S.mp4");
+            String output =
+                    dir.resolve("%Y-%m-%d_%H-%M-%S.mp4").toString();
 
             ProcessBuilder pb = new ProcessBuilder(
                     FFMPEG,
@@ -95,14 +87,14 @@ public class RecordingService {
                     "-reset_timestamps", "1",
                     "-strftime", "1",
 
-                    outputPattern.toString()
+                    output
             );
 
-            Process process = pb
-                    .redirectErrorStream(true)
-                    .start();
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
 
             processes.put(cameraId, process);
+            lastOutput.put(cameraId, Instant.now());
             lastStart.put(cameraId, Instant.now());
 
             healthService.setState(
@@ -110,27 +102,25 @@ public class RecordingService {
                     HealthService.CameraState.RECORDING
             );
 
-            detectActiveFile(cameraId, dir);
-
-            new Thread(
-                    () -> waitForExit(cameraId, process),
-                    "ffmpeg-exit-" + cameraId
-            ).start();
-
-            restarting.put(cameraId, false);
+            new Thread(() -> log(cameraId, process), "ffmpeg-log-" + cameraId).start();
+            new Thread(() -> exitWatchdog(cameraId, process), "exit-watchdog-" + cameraId).start();
 
             System.out.println("✅ Recording started: " + cameraId);
 
         } catch (Exception e) {
-            restarting.put(cameraId, false);
-            e.printStackTrace();
+            throw new RuntimeException("FFmpeg failed for " + cameraId, e);
         }
     }
 
     // ===================== STOP =====================
     public synchronized void stopRecording(String cameraId) {
         autoRestart.put(cameraId, false);
-        cleanupState(cameraId);
+
+        Process p = processes.remove(cameraId);
+        if (p != null) p.destroyForcibly();
+
+        lastOutput.remove(cameraId);
+        lastStart.remove(cameraId);
 
         healthService.setState(
                 cameraId,
@@ -140,68 +130,71 @@ public class RecordingService {
         System.out.println("🛑 Recording stopped: " + cameraId);
     }
 
-    // ===================== CLEANUP =====================
-    private synchronized void cleanupState(String cameraId) {
-        Process p = processes.remove(cameraId);
-        if (p != null) {
-            p.destroyForcibly();
-        }
-
-        activeFile.remove(cameraId);
-        lastStart.remove(cameraId);
-        restarting.remove(cameraId);
-    }
-
     // ===================== EXIT WATCHDOG =====================
-    private void waitForExit(String cameraId, Process process) {
+    private void exitWatchdog(String cameraId, Process process) {
         try {
-            process.waitFor();
+            int code = process.waitFor();
+            processes.remove(cameraId);
 
-            if (!Boolean.TRUE.equals(autoRestart.get(cameraId))) {
-                return;
-            }
+            if (!Boolean.TRUE.equals(autoRestart.get(cameraId))) return;
 
-            System.err.println("🔁 FFmpeg exited for " + cameraId);
+            System.out.println("🔁 FFmpeg exited for " + cameraId + " (code=" + code + ")");
 
             healthService.setState(
                     cameraId,
                     HealthService.CameraState.RESTARTING
             );
 
-            Thread.sleep(5000);
+            Thread.sleep(7000);
             startRecording(cameraId);
 
         } catch (InterruptedException ignored) {}
     }
 
-    // ===================== FILE HEARTBEAT =====================
-    private void fileHeartbeatMonitor() {
+    // ===================== LOG =====================
+    private void log(String cam, Process p) {
+        try (BufferedReader br =
+                     new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+
+            String line;
+            while ((line = br.readLine()) != null) {
+                lastOutput.put(cam, Instant.now());
+                System.out.println("[" + cam + "] " + line);
+            }
+
+        } catch (Exception ignored) {}
+    }
+
+    // ===================== STALL MONITOR =====================
+    private void stallMonitor() {
         while (true) {
             try {
                 Thread.sleep(10_000);
 
                 for (String cam : processes.keySet()) {
-                    Path file = activeFile.get(cam);
-                    if (file == null || !Files.exists(file)) continue;
+                    Instant last = lastOutput.get(cam);
+                    if (last == null) continue;
 
                     long silent =
                             Instant.now().getEpochSecond()
-                                    - Files.getLastModifiedTime(file)
-                                    .toInstant()
-                                    .getEpochSecond();
+                                    - last.getEpochSecond();
 
                     if (silent > STALL_TIMEOUT_SEC) {
-                        System.err.println("⚠ File stall detected for " + cam);
+                        System.err.println("⚠ FFmpeg stalled for " + cam);
 
                         healthService.setState(
                                 cam,
                                 HealthService.CameraState.RESTARTING
                         );
 
+                        Process p = processes.remove(cam);
+                        if (p != null) p.destroyForcibly();
+
+                        Thread.sleep(3000);
                         startRecording(cam);
                     }
                 }
-            } catch (Exception ignored) {}
+            } catch (InterruptedException ignored) {}
         }
     }
 
@@ -227,35 +220,14 @@ public class RecordingService {
                                 HealthService.CameraState.RESTARTING
                         );
 
+                        Process p = processes.remove(cam);
+                        if (p != null) p.destroyForcibly();
+
+                        Thread.sleep(3000);
                         startRecording(cam);
                     }
                 }
             } catch (InterruptedException ignored) {}
         }
-    }
-
-    // ===================== ACTIVE FILE DETECTION =====================
-    private void detectActiveFile(String cam, Path dir) {
-        new Thread(() -> {
-            try {
-                while (!activeFile.containsKey(cam)) {
-                    Files.list(dir)
-                            .filter(p -> p.toString().endsWith(".mp4"))
-                            .max((a, b) -> {
-                                try {
-                                    return Files.getLastModifiedTime(a)
-                                            .compareTo(
-                                                    Files.getLastModifiedTime(b)
-                                            );
-                                } catch (Exception e) {
-                                    return 0;
-                                }
-                            })
-                            .ifPresent(p -> activeFile.put(cam, p));
-
-                    Thread.sleep(2000);
-                }
-            } catch (Exception ignored) {}
-        }, "active-file-detector-" + cam).start();
     }
 }
