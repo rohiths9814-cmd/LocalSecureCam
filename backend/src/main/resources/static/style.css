@@ -1,0 +1,27 @@
+body {
+  font-family: Arial, sans-serif;
+  margin: 16px;
+  background: #111;
+  color: #eee;
+}
+
+h1 {
+  text-align: center;
+}
+
+.camera {
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.status {
+  font-weight: bold;
+}
+
+button {
+  margin-top: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
