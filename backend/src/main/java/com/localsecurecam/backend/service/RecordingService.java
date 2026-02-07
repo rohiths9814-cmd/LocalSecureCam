@@ -4,6 +4,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.*;
 import java.nio.file.*;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,19 +15,22 @@ public class RecordingService {
     private static final String FFMPEG = "/usr/bin/ffmpeg";
     private static final String BASE_DIR = "/home/pi/LocalSecureCam/recordings";
 
+    // If no FFmpeg output for this time → restart
+    private static final long STALL_TIMEOUT_SEC = 30;
+
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
     private final Map<String, Boolean> autoRestart = new ConcurrentHashMap<>();
+    private final Map<String, Instant> lastOutput = new ConcurrentHashMap<>();
 
     private final Map<String, String> cameraUrls = Map.of(
-        "camera1", "rtsp://192.168.31.196:554/",
-        "camera2", "rtsp://192.168.31.107:554/"
+            "camera1", "rtsp://192.168.31.196:554/",
+            "camera2", "rtsp://192.168.31.107:554/"
     );
 
-    // ===================== START RECORDING =====================
+    // ===================== START =====================
     public synchronized void startRecording(String cameraId) {
 
         if (processes.containsKey(cameraId)) {
-            System.out.println("⚠ Already recording: " + cameraId);
             return;
         }
 
@@ -38,48 +42,45 @@ public class RecordingService {
         autoRestart.put(cameraId, true);
 
         try {
-            Path dir = Paths.get(
-                BASE_DIR,
-                cameraId,
-                LocalDate.now().toString()
-            );
+            Path dir = Paths.get(BASE_DIR, cameraId, LocalDate.now().toString());
             Files.createDirectories(dir);
 
-            String output =
-                dir.resolve("%Y-%m-%d_%H-%M-%S.mp4").toString();
+            String output = dir.resolve("%Y-%m-%d_%H-%M-%S.mp4").toString();
 
             ProcessBuilder pb = new ProcessBuilder(
-                FFMPEG,
+                    FFMPEG,
 
-                "-rtsp_transport", "tcp",
-                "-probesize", "10M",
-                "-analyzeduration", "10M",
+                    "-rtsp_transport", "tcp",
+                    "-stimeout", "5000000",
+                    "-rw_timeout", "5000000",
 
-                "-fflags", "+genpts",
-                "-use_wallclock_as_timestamps", "1",
-                "-avoid_negative_ts", "make_zero",
+                    "-fflags", "+genpts",
+                    "-use_wallclock_as_timestamps", "1",
+                    "-avoid_negative_ts", "make_zero",
 
-                "-i", rtspUrl,
+                    "-i", rtspUrl,
 
-                "-map", "0:v:0",
-                "-c:v", "copy",
+                    "-map", "0:v:0",
+                    "-c:v", "copy",
 
-                "-movflags", "+frag_keyframe+empty_moov",
+                    "-movflags", "+frag_keyframe+empty_moov",
 
-                "-f", "segment",
-                "-segment_time", "300",
-                "-reset_timestamps", "1",
-                "-strftime", "1",
+                    "-f", "segment",
+                    "-segment_time", "300",
+                    "-reset_timestamps", "1",
+                    "-strftime", "1",
 
-                output
+                    output
             );
 
             pb.redirectErrorStream(true);
             Process process = pb.start();
+
             processes.put(cameraId, process);
+            lastOutput.put(cameraId, Instant.now());
 
             new Thread(() -> log(cameraId, process), "ffmpeg-log-" + cameraId).start();
-            new Thread(() -> watchdog(cameraId, process), "watchdog-" + cameraId).start();
+            new Thread(() -> exitWatchdog(cameraId, process), "exit-watchdog-" + cameraId).start();
 
             System.out.println("✅ Recording started: " + cameraId);
 
@@ -88,49 +89,71 @@ public class RecordingService {
         }
     }
 
-    // ===================== STOP RECORDING =====================
+    // ===================== STOP =====================
     public synchronized void stopRecording(String cameraId) {
         autoRestart.put(cameraId, false);
 
         Process p = processes.remove(cameraId);
         if (p != null) {
-            p.destroy();
-            System.out.println("🛑 Recording stopped: " + cameraId);
+            p.destroyForcibly();
         }
+
+        lastOutput.remove(cameraId);
     }
 
-    // ===================== WATCHDOG =====================
-    private void watchdog(String cameraId, Process process) {
+    // ===================== EXIT WATCHDOG =====================
+    private void exitWatchdog(String cameraId, Process process) {
         try {
-            int exitCode = process.waitFor();
+            int code = process.waitFor();
             processes.remove(cameraId);
 
-            if (!Boolean.TRUE.equals(autoRestart.get(cameraId))) {
-                System.out.println("🛑 FFmpeg stopped manually: " + cameraId);
-                return;
-            }
+            if (!Boolean.TRUE.equals(autoRestart.get(cameraId))) return;
 
-            System.out.println("🔁 FFmpeg disconnected for " + cameraId +
-                    " (exit=" + exitCode + "), restarting...");
-
+            System.out.println("🔁 FFmpeg exited for " + cameraId + " (code=" + code + ")");
             Thread.sleep(7000);
             startRecording(cameraId);
 
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        } catch (InterruptedException ignored) {}
     }
 
-    // ===================== LOGGING =====================
+    // ===================== LOG + STALL DETECTION =====================
     private void log(String cam, Process p) {
-        try (BufferedReader br =
-                 new BufferedReader(new InputStreamReader(p.getInputStream()))) {
-
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
             String line;
             while ((line = br.readLine()) != null) {
+                lastOutput.put(cam, Instant.now());
                 System.out.println("[" + cam + "] " + line);
             }
-
         } catch (IOException ignored) {}
+    }
+
+    // ===================== STALL MONITOR =====================
+    public RecordingService() {
+        new Thread(this::stallMonitor, "ffmpeg-stall-monitor").start();
+    }
+
+    private void stallMonitor() {
+        while (true) {
+            try {
+                Thread.sleep(10_000);
+
+                for (String cam : processes.keySet()) {
+                    Instant last = lastOutput.get(cam);
+                    if (last == null) continue;
+
+                    long silent = Instant.now().getEpochSecond() - last.getEpochSecond();
+
+                    if (silent > STALL_TIMEOUT_SEC) {
+                        System.err.println("⚠ FFmpeg stalled for " + cam + ", restarting");
+
+                        Process p = processes.remove(cam);
+                        if (p != null) p.destroyForcibly();
+
+                        Thread.sleep(3000);
+                        startRecording(cam);
+                    }
+                }
+            } catch (InterruptedException ignored) {}
+        }
     }
 }
