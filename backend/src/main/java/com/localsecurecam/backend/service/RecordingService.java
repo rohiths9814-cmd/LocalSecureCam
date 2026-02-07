@@ -14,15 +14,16 @@ public class RecordingService {
     private static final String FFMPEG = "/usr/bin/ffmpeg";
     private static final String BASE_DIR = "/home/pi/LocalSecureCam/recordings";
 
-    // ===== TUNING =====
+    // ===== TUNING (SAFE DEFAULTS) =====
     private static final long STALL_TIMEOUT_SEC = 45;
     private static final long FORCED_RESTART_SEC = 2 * 60 * 60; // 2 hours
-    // ==================
+    // =================================
 
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
     private final Map<String, Instant> lastStart = new ConcurrentHashMap<>();
     private final Map<String, Path> activeFile = new ConcurrentHashMap<>();
     private final Map<String, Boolean> autoRestart = new ConcurrentHashMap<>();
+    private final Map<String, Boolean> restarting = new ConcurrentHashMap<>();
 
     private final Map<String, String> cameraUrls = Map.of(
             "camera1", "rtsp://192.168.31.196:554/",
@@ -42,14 +43,22 @@ public class RecordingService {
     // ===================== START =====================
     public synchronized void startRecording(String cameraId) {
 
+        // Prevent restart storms
+        if (Boolean.TRUE.equals(restarting.get(cameraId))) {
+            return;
+        }
+
+        restarting.put(cameraId, true);
+
         String rtspUrl = cameraUrls.get(cameraId);
         if (rtspUrl == null) {
+            restarting.put(cameraId, false);
             throw new RuntimeException("Unknown camera: " + cameraId);
         }
 
         autoRestart.put(cameraId, true);
 
-        // HARD RESET STATE (important)
+        // HARD cleanup before start
         cleanupState(cameraId);
 
         try {
@@ -108,9 +117,12 @@ public class RecordingService {
                     "ffmpeg-exit-" + cameraId
             ).start();
 
+            restarting.put(cameraId, false);
+
             System.out.println("✅ Recording started: " + cameraId);
 
         } catch (Exception e) {
+            restarting.put(cameraId, false);
             e.printStackTrace();
         }
     }
@@ -137,6 +149,7 @@ public class RecordingService {
 
         activeFile.remove(cameraId);
         lastStart.remove(cameraId);
+        restarting.remove(cameraId);
     }
 
     // ===================== EXIT WATCHDOG =====================
@@ -185,7 +198,7 @@ public class RecordingService {
                                 HealthService.CameraState.RESTARTING
                         );
 
-                        startRecording(cam); // HARD restart
+                        startRecording(cam);
                     }
                 }
             } catch (Exception ignored) {}
