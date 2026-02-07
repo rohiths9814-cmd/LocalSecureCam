@@ -23,7 +23,8 @@ public class HealthController {
     @GetMapping("/health")
     public Map<String, Object> health() {
         Map<String, Object> data = new HashMap<>();
-        File recordings = new File("recordings");
+
+        File recordings = new File("/home/pi/LocalSecureCam/recordings");
 
         data.put("diskFreePercent", diskService.getFreePercent(recordings));
         data.put("cameras", healthService.snapshot());

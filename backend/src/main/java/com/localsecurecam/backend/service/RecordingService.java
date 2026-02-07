@@ -15,12 +15,14 @@ public class RecordingService {
     private static final String BASE_DIR = "/home/pi/LocalSecureCam/recordings";
 
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
+    private final Map<String, Boolean> autoRestart = new ConcurrentHashMap<>();
 
     private final Map<String, String> cameraUrls = Map.of(
         "camera1", "rtsp://192.168.31.196:554/",
         "camera2", "rtsp://192.168.31.107:554/"
     );
 
+    // ===================== START RECORDING =====================
     public synchronized void startRecording(String cameraId) {
 
         if (processes.containsKey(cameraId)) {
@@ -32,6 +34,8 @@ public class RecordingService {
         if (rtspUrl == null) {
             throw new RuntimeException("Unknown camera: " + cameraId);
         }
+
+        autoRestart.put(cameraId, true);
 
         try {
             Path dir = Paths.get(
@@ -45,49 +49,49 @@ public class RecordingService {
                 dir.resolve("%Y-%m-%d_%H-%M-%S.mp4").toString();
 
             ProcessBuilder pb = new ProcessBuilder(
-                "/usr/bin/ffmpeg",
-                        
+                FFMPEG,
+
                 "-rtsp_transport", "tcp",
                 "-probesize", "10M",
                 "-analyzeduration", "10M",
-                        
+
                 "-fflags", "+genpts",
                 "-use_wallclock_as_timestamps", "1",
                 "-avoid_negative_ts", "make_zero",
-                        
+
                 "-i", rtspUrl,
-                        
-                // COPY (NO RE-ENCODE)
+
                 "-map", "0:v:0",
                 "-c:v", "copy",
-                        
-                // SAFE MP4
+
                 "-movflags", "+frag_keyframe+empty_moov",
-                        
+
                 "-f", "segment",
                 "-segment_time", "300",
                 "-reset_timestamps", "1",
                 "-strftime", "1",
-                        
+
                 output
             );
-
 
             pb.redirectErrorStream(true);
             Process process = pb.start();
             processes.put(cameraId, process);
 
-            new Thread(() -> log(cameraId, process)).start();
+            new Thread(() -> log(cameraId, process), "ffmpeg-log-" + cameraId).start();
+            new Thread(() -> watchdog(cameraId, process), "watchdog-" + cameraId).start();
 
             System.out.println("✅ Recording started: " + cameraId);
 
         } catch (Exception e) {
-            e.printStackTrace();
-            throw new RuntimeException("FFmpeg failed", e);
+            throw new RuntimeException("FFmpeg failed for " + cameraId, e);
         }
     }
 
+    // ===================== STOP RECORDING =====================
     public synchronized void stopRecording(String cameraId) {
+        autoRestart.put(cameraId, false);
+
         Process p = processes.remove(cameraId);
         if (p != null) {
             p.destroy();
@@ -95,13 +99,38 @@ public class RecordingService {
         }
     }
 
+    // ===================== WATCHDOG =====================
+    private void watchdog(String cameraId, Process process) {
+        try {
+            int exitCode = process.waitFor();
+            processes.remove(cameraId);
+
+            if (!Boolean.TRUE.equals(autoRestart.get(cameraId))) {
+                System.out.println("🛑 FFmpeg stopped manually: " + cameraId);
+                return;
+            }
+
+            System.out.println("🔁 FFmpeg disconnected for " + cameraId +
+                    " (exit=" + exitCode + "), restarting...");
+
+            Thread.sleep(7000);
+            startRecording(cameraId);
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    // ===================== LOGGING =====================
     private void log(String cam, Process p) {
         try (BufferedReader br =
                  new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+
             String line;
             while ((line = br.readLine()) != null) {
                 System.out.println("[" + cam + "] " + line);
             }
+
         } catch (IOException ignored) {}
     }
 }

@@ -16,12 +16,12 @@ public class CameraController {
     @GetMapping("/{cameraId}/start")
     public String start(@PathVariable String cameraId) {
         recordingService.startRecording(cameraId);
-        return "Recording started for " + cameraId;
+        return "✅ Recording started for " + cameraId;
     }
 
     @GetMapping("/{cameraId}/stop")
     public String stop(@PathVariable String cameraId) {
         recordingService.stopRecording(cameraId);
-        return "Recording stopped for " + cameraId;
+        return "🛑 Recording stopped for " + cameraId;
     }
 }
