@@ -71,6 +71,7 @@ public class RecordingService {
 
                 "-f", "segment",
                 "-segment_time", "300",
+                "-segment_atclocktime", "1",
                 "-reset_timestamps", "1",
                 "-strftime", "1",
 
