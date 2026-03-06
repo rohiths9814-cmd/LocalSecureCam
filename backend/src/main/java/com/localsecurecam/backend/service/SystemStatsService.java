@@ -7,6 +7,7 @@ import java.io.InputStreamReader;
 import java.lang.management.ManagementFactory;
 import com.sun.management.OperatingSystemMXBean;
 import java.io.File;
+import java.io.FileReader;
 
 @Service
 public class SystemStatsService {
@@ -19,13 +20,40 @@ public class SystemStatsService {
     }
 
     public double getRamUsage() {
-        OperatingSystemMXBean osBean =
-                (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
-
-        long total = osBean.getTotalMemorySize();
-        long free = osBean.getFreeMemorySize();
-
-        return ((double)(total - free) / total) * 100;
+        
+        try {
+        
+            BufferedReader br = new BufferedReader(new FileReader("/proc/meminfo"));
+        
+            long total = 0;
+            long available = 0;
+        
+            String line;
+        
+            while ((line = br.readLine()) != null) {
+            
+                if (line.startsWith("MemTotal")) {
+                    total = Long.parseLong(line.replaceAll("\\D+", ""));
+                }
+            
+                if (line.startsWith("MemAvailable")) {
+                    available = Long.parseLong(line.replaceAll("\\D+", ""));
+                }
+            
+            }
+        
+            br.close();
+        
+            long used = total - available;
+        
+            return (used * 100.0) / total;
+        
+        } catch (Exception e) {
+        
+            return 0;
+        
+        }
+    
     }
 
     public double getTemperature() {

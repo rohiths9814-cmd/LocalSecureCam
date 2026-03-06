@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
 
 <title>LocalSecureCam Dashboard</title>
@@ -12,25 +13,37 @@ body{
 background:#0f172a;
 color:white;
 font-family:Arial;
+margin:0;
+padding:30px;
+}
+
+h1{
+margin-bottom:30px;
 }
 
 .container{
-width:1200px;
-margin:auto;
+display:grid;
+grid-template-columns:repeat(4,1fr);
+gap:20px;
 }
 
 .card{
 background:#1e293b;
 padding:20px;
 border-radius:12px;
-margin:10px;
-display:inline-block;
-width:260px;
+font-size:20px;
 }
 
-.camera{
-width:100%;
-border-radius:10px;
+.value{
+font-size:28px;
+margin-top:10px;
+}
+
+.chart-container{
+margin-top:40px;
+background:#1e293b;
+padding:20px;
+border-radius:12px;
 }
 
 </style>
@@ -39,37 +52,33 @@ border-radius:10px;
 
 <body>
 
+<h1>📷 LocalSecureCam Dashboard</h1>
+
 <div class="container">
-
-<h1>📷 LocalSecureCam</h1>
-
-<img class="camera"
-src="/live/camera1" />
-
-<div class="camera-container">
-    <h2>Main Camera</h2>
-    <img id="camera" width="640"/>
-</div>
 
 <div class="card">
 CPU
-<h2 id="cpu">0%</h2>
+<div class="value" id="cpu">--</div>
 </div>
 
 <div class="card">
 RAM
-<h2 id="ram">0%</h2>
+<div class="value" id="ram">--</div>
 </div>
 
 <div class="card">
 Temperature
-<h2 id="temp">0°C</h2>
+<div class="value" id="temp">--</div>
 </div>
 
 <div class="card">
 Storage
-<h2 id="disk">0%</h2>
+<div class="value" id="disk">--</div>
 </div>
+
+</div>
+
+<div class="chart-container">
 
 <canvas id="cpuChart"></canvas>
 
@@ -77,60 +86,78 @@ Storage
 
 <script>
 
-let cpuData = []
+const cpuEl = document.getElementById("cpu");
+const ramEl = document.getElementById("ram");
+const tempEl = document.getElementById("temp");
+const diskEl = document.getElementById("disk");
 
-const ctx = document.getElementById('cpuChart')
+const ctx = document.getElementById("cpuChart");
 
-const cpuChart = new Chart(ctx, {
+const cpuData = [];
 
-type:'line',
-
+const cpuChart = new Chart(ctx,{
+type:"line",
 data:{
 labels:[],
 datasets:[{
-label:'CPU %',
+label:"CPU %",
 data:cpuData,
-borderColor:'cyan'
+borderColor:"#22c55e",
+backgroundColor:"rgba(34,197,94,0.2)",
+tension:0.4
 }]
+},
+options:{
+scales:{
+y:{
+min:0,
+max:100
+}
+}
+}
+});
+
+async function loadStats(){
+
+try{
+
+const res = await fetch("/api/system/stats");
+
+const data = await res.json();
+
+cpuEl.innerText = data.cpu.toFixed(1) + "%";
+ramEl.innerText = data.ram.toFixed(1) + "%";
+tempEl.innerText = data.temperature.toFixed(1) + " °C";
+diskEl.innerText = data.disk.toFixed(1) + "%";
+
+cpuData.push(data.cpu);
+
+if(cpuData.length > 30){
+cpuData.shift();
 }
 
-})
+cpuChart.data.labels.push("");
 
-async function loadCamera(){
+if(cpuChart.data.labels.length > 30){
+cpuChart.data.labels.shift();
+}
 
-    const res = await fetch("/camera/main");
-    const url = await res.text();
+cpuChart.update();
 
-    document.getElementById("camera").src =
-        "http://192.168.31.85:8080/api/stream";
+}catch(e){
+
+console.log("API error");
 
 }
 
-loadCamera();
-
-
-async function load(){
-
-const r = await fetch('/api/system-stats')
-const d = await r.json()
-
-document.getElementById('cpu').innerText = d.cpu.toFixed(1) + "%"
-document.getElementById('ram').innerText = d.ram.toFixed(1) + "%"
-document.getElementById('temp').innerText = d.temp + "°C"
-document.getElementById('disk').innerText = d.disk.toFixed(1) + "%"
-
-cpuData.push(d.cpu)
-
-if(cpuData.length > 20)
-cpuData.shift()
-
-cpuChart.update()
-
 }
 
-setInterval(load,2000)
+setInterval(loadStats,2000);
+
+loadStats();
 
 </script>
 
 </body>
+
 </html>
