@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+
+<title>LocalSecureCam Dashboard</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+
+body{
+background:#0f172a;
+color:white;
+font-family:Arial;
+}
+
+.container{
+width:1200px;
+margin:auto;
+}
+
+.card{
+background:#1e293b;
+padding:20px;
+border-radius:12px;
+margin:10px;
+display:inline-block;
+width:260px;
+}
+
+.camera{
+width:100%;
+border-radius:10px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>📷 LocalSecureCam</h1>
+
+<img class="camera"
+src="/live/camera1" />
+
+<div class="card">
+CPU
+<h2 id="cpu">0%</h2>
+</div>
+
+<div class="card">
+RAM
+<h2 id="ram">0%</h2>
+</div>
+
+<div class="card">
+Temperature
+<h2 id="temp">0°C</h2>
+</div>
+
+<div class="card">
+Storage
+<h2 id="disk">0%</h2>
+</div>
+
+<canvas id="cpuChart"></canvas>
+
+</div>
+
+<script>
+
+let cpuData = []
+
+const ctx = document.getElementById('cpuChart')
+
+const cpuChart = new Chart(ctx, {
+
+type:'line',
+
+data:{
+labels:[],
+datasets:[{
+label:'CPU %',
+data:cpuData,
+borderColor:'cyan'
+}]
+}
+
+})
+
+async function load(){
+
+const r = await fetch('/api/system-stats')
+const d = await r.json()
+
+document.getElementById('cpu').innerText = d.cpu.toFixed(1) + "%"
+document.getElementById('ram').innerText = d.ram.toFixed(1) + "%"
+document.getElementById('temp').innerText = d.temp + "°C"
+document.getElementById('disk').innerText = d.disk.toFixed(1) + "%"
+
+cpuData.push(d.cpu)
+
+if(cpuData.length > 20)
+cpuData.shift()
+
+cpuChart.update()
+
+}
+
+setInterval(load,2000)
+
+</script>
+
+</body>
+</html>
