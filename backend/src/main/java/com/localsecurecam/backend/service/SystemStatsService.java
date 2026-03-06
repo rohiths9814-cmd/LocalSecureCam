@@ -30,15 +30,22 @@ public class SystemStatsService {
 
     public double getTemperature() {
         try {
-            BufferedReader br = new BufferedReader(
-                new InputStreamReader(
-                    Runtime.getRuntime().exec("cat /sys/class/thermal/thermal_zone0/temp").getInputStream()
-                )
+        
+            ProcessBuilder pb = new ProcessBuilder(
+                    "cat",
+                    "/sys/class/thermal/thermal_zone0/temp"
             );
-
+        
+            Process p = pb.start();
+        
+            BufferedReader br = new BufferedReader(
+                    new InputStreamReader(p.getInputStream())
+            );
+        
             String temp = br.readLine();
+        
             return Integer.parseInt(temp) / 1000.0;
-
+        
         } catch (Exception e) {
             return 0;
         }
