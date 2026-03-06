@@ -46,6 +46,11 @@ border-radius:10px;
 <img class="camera"
 src="/live/camera1" />
 
+<div class="camera-container">
+    <h2>Main Camera</h2>
+    <img id="camera" width="640"/>
+</div>
+
 <div class="card">
 CPU
 <h2 id="cpu">0%</h2>
@@ -90,6 +95,19 @@ borderColor:'cyan'
 }
 
 })
+
+async function loadCamera(){
+
+    const res = await fetch("/camera/main");
+    const url = await res.text();
+
+    document.getElementById("camera").src =
+        "http://192.168.31.85:8080/api/stream";
+
+}
+
+loadCamera();
+
 
 async function load(){
 
