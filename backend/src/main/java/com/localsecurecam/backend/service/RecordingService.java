@@ -1,5 +1,7 @@
 package com.localsecurecam.backend.service;
 
+import com.localsecurecam.backend.config.CameraProperties;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
 import java.io.*;
@@ -13,7 +15,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class RecordingService {
 
     private static final String FFMPEG = "/usr/bin/ffmpeg";
-    private static final String BASE_DIR = "/home/pi/LocalSecureCam/recordings";
 
     // ===== TUNING PARAMETERS =====
     private static final long STALL_TIMEOUT_SEC = 30;
@@ -25,12 +26,16 @@ public class RecordingService {
     private final Map<String, Instant> lastOutput = new ConcurrentHashMap<>();
     private final Map<String, Instant> lastStart = new ConcurrentHashMap<>();
 
-    private final Map<String, String> cameraUrls = Map.of(
-            "camera1", "rtsp://192.168.31.196:554/",
-            "camera2", "rtsp://192.168.31.107:554/"
-    );
+    private final CameraProperties props;
+    private final HealthService healthService;
 
-    public RecordingService() {
+    public RecordingService(CameraProperties props, HealthService healthService) {
+        this.props = props;
+        this.healthService = healthService;
+    }
+
+    @PostConstruct
+    void startMonitors() {
         new Thread(this::stallMonitor, "ffmpeg-stall-monitor").start();
         new Thread(this::scheduledRestartMonitor, "ffmpeg-periodic-restart").start();
     }
@@ -40,13 +45,13 @@ public class RecordingService {
 
         if (processes.containsKey(cameraId)) return;
 
-        String rtspUrl = cameraUrls.get(cameraId);
+        String rtspUrl = props.getCameras().get(cameraId);
         if (rtspUrl == null) throw new RuntimeException("Unknown camera: " + cameraId);
 
         autoRestart.put(cameraId, true);
 
         try {
-            Path dir = Paths.get(BASE_DIR, cameraId, LocalDate.now().toString());
+            Path dir = Paths.get(props.getRecordingsDir(), cameraId, LocalDate.now().toString());
             Files.createDirectories(dir);
 
             String output = dir.resolve("%Y-%m-%d_%H-%M-%S.mp4").toString();
@@ -84,6 +89,7 @@ public class RecordingService {
             processes.put(cameraId, process);
             lastOutput.put(cameraId, Instant.now());
             lastStart.put(cameraId, Instant.now());
+            healthService.setStatus(cameraId, HealthService.CameraStatus.RECORDING);
 
             new Thread(() -> log(cameraId, process), "ffmpeg-log-" + cameraId).start();
             new Thread(() -> exitWatchdog(cameraId, process), "exit-watchdog-" + cameraId).start();
@@ -91,6 +97,7 @@ public class RecordingService {
             System.out.println("✅ Recording started: " + cameraId);
 
         } catch (Exception e) {
+            healthService.setStatus(cameraId, HealthService.CameraStatus.STOPPED);
             throw new RuntimeException("FFmpeg failed for " + cameraId, e);
         }
     }
@@ -104,6 +111,7 @@ public class RecordingService {
 
         lastOutput.remove(cameraId);
         lastStart.remove(cameraId);
+        healthService.setStatus(cameraId, HealthService.CameraStatus.STOPPED);
     }
 
     // ===================== EXIT WATCHDOG =====================
@@ -114,6 +122,7 @@ public class RecordingService {
 
             if (!Boolean.TRUE.equals(autoRestart.get(cameraId))) return;
 
+            healthService.setStatus(cameraId, HealthService.CameraStatus.RECONNECTING);
             System.out.println("🔁 FFmpeg exited for " + cameraId + " (code=" + code + ")");
             Thread.sleep(7000);
             startRecording(cameraId);
@@ -146,6 +155,7 @@ public class RecordingService {
 
                     if (silent > STALL_TIMEOUT_SEC) {
                         System.err.println("⚠ FFmpeg stalled for " + cam + ", restarting");
+                        healthService.setStatus(cam, HealthService.CameraStatus.RECONNECTING);
 
                         Process p = processes.remove(cam);
                         if (p != null) p.destroyForcibly();
@@ -172,6 +182,7 @@ public class RecordingService {
 
                     if (uptime > FORCED_RESTART_SEC) {
                         System.out.println("♻ Periodic FFmpeg restart for " + cam);
+                        healthService.setStatus(cam, HealthService.CameraStatus.RECONNECTING);
 
                         Process p = processes.remove(cam);
                         if (p != null) p.destroyForcibly();

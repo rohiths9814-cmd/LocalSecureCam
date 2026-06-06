@@ -42,6 +42,19 @@ padding:20px;
 border-radius:10px;
 }
 
+.cameras{
+margin-top:40px;
+display:grid;
+grid-template-columns:repeat(2,1fr);
+gap:20px;
+}
+
+.cameras img{
+width:100%;
+border-radius:10px;
+background:#000;
+}
+
 </style>
 
 </head>
@@ -76,6 +89,12 @@ Storage
 
 <div class="chart-box">
 <canvas id="cpuChart"></canvas>
+</div>
+
+<h2>Live View</h2>
+<div class="cameras">
+<img src="/api/stream/camera1" alt="camera1">
+<img src="/api/stream/camera2" alt="camera2">
 </div>
 
 <script>
@@ -113,7 +132,7 @@ async function loadStats(){
 
 try{
 
-const res = await fetch("/api/system/stats")
+const res = await fetch("/api/system-stats")
 
 const data = await res.json()
 
