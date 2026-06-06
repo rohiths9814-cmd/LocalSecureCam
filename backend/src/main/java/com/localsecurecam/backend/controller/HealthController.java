@@ -2,6 +2,7 @@ package com.localsecurecam.backend.controller;
 
 import com.localsecurecam.backend.service.DiskService;
 import com.localsecurecam.backend.service.HealthService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -15,6 +16,9 @@ public class HealthController {
     private final HealthService healthService;
     private final DiskService diskService;
 
+    @Value("${app.recordings-dir}")
+    private String recordingsDir;
+
     public HealthController(HealthService healthService, DiskService diskService) {
         this.healthService = healthService;
         this.diskService = diskService;
@@ -24,7 +28,7 @@ public class HealthController {
     public Map<String, Object> health() {
         Map<String, Object> data = new HashMap<>();
 
-        File recordings = new File("/home/pi/LocalSecureCam/recordings");
+        File recordings = new File(recordingsDir);
 
         data.put("diskFreePercent", diskService.getFreePercent(recordings));
         data.put("cameras", healthService.snapshot());

@@ -1,5 +1,6 @@
 package com.localsecurecam.backend.service;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -11,7 +12,8 @@ import java.util.Comparator;
 @Service
 public class DiskCleanupService {
 
-    private static final String RECORDINGS_DIR = "/home/pi/LocalSecureCam/recordings";
+    @Value("${app.recordings-dir}")
+    private String recordingsDir;
 
     private static final int KEEP_DAYS = 7;
     private static final int MIN_FREE_PERCENT = 15;
@@ -33,7 +35,7 @@ public class DiskCleanupService {
     private void cleanupByAge() throws Exception {
         LocalDate cutoff = LocalDate.now().minusDays(KEEP_DAYS);
 
-        Files.walk(Paths.get(RECORDINGS_DIR), 2)
+        Files.walk(Paths.get(recordingsDir), 2)
                 .filter(Files::isDirectory)
                 .filter(p -> isDateFolder(p.getFileName().toString()))
                 .filter(p -> LocalDate.parse(p.getFileName().toString()).isBefore(cutoff))
@@ -42,7 +44,7 @@ public class DiskCleanupService {
 
     // ===================== DISK SPACE CLEANUP =====================
     private void cleanupByDiskSpace() throws Exception {
-        File root = new File(RECORDINGS_DIR);
+        File root = new File(recordingsDir);
 
         while (getFreePercent(root) < MIN_FREE_PERCENT) {
             Path oldest = findOldestDateFolder();
@@ -54,7 +56,7 @@ public class DiskCleanupService {
 
     // ===================== HELPERS =====================
     private Path findOldestDateFolder() throws Exception {
-        return Files.walk(Paths.get(RECORDINGS_DIR), 2)
+        return Files.walk(Paths.get(recordingsDir), 2)
                 .filter(Files::isDirectory)
                 .filter(p -> isDateFolder(p.getFileName().toString()))
                 .filter(p -> !p.getFileName().toString().equals(LocalDate.now().toString()))

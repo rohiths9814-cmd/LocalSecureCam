@@ -1,5 +1,6 @@
 package com.localsecurecam.backend.service;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.*;
@@ -13,7 +14,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public class RecordingService {
 
     private static final String FFMPEG = "/usr/bin/ffmpeg";
-    private static final String BASE_DIR = "/home/pi/LocalSecureCam/recordings";
+
+    // Storage location (e.g. mounted pendrive/SSD). Configured in application.properties.
+    @Value("${app.recordings-dir}")
+    private String baseDir;
 
     // ===== TUNING PARAMETERS =====
     private static final long STALL_TIMEOUT_SEC = 30;
@@ -46,7 +50,7 @@ public class RecordingService {
         autoRestart.put(cameraId, true);
 
         try {
-            Path dir = Paths.get(BASE_DIR, cameraId, LocalDate.now().toString());
+            Path dir = Paths.get(baseDir, cameraId, LocalDate.now().toString());
             Files.createDirectories(dir);
 
             String output = dir.resolve("%Y-%m-%d_%H-%M-%S.mp4").toString();
